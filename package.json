@@ -3,12 +3,10 @@
   "version": "1.0.0",
   "description": "ADKIMS Backend API with M-Pesa Integration",
   "main": "dist/app.js",
- "scripts": {
+    "scripts": {
     "start": "node dist/app.js",
     "dev": "ts-node-dev --respawn --transpile-only src/app.ts",
-    "build": "npm run build:types || npm run build:js",
-    "build:types": "tsc",
-    "build:js": "echo 'Building JavaScript files anyway...' && npx tsc --noEmit --outDir dist",
+    "build": "tsc --skipLibCheck",
     "test": "jest"
   },
   "dependencies": {
