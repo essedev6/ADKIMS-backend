@@ -202,5 +202,18 @@
   {
     "receivedAt": "2025-09-17T22:37:35.624Z",
     "body": {}
+  },
+  {
+    "receivedAt": "2025-09-17T23:00:52.015Z",
+    "body": {
+      "Body": {
+        "stkCallback": {
+          "MerchantRequestID": "9ba0-4845-bf5b-e11eb4372da63225",
+          "CheckoutRequestID": "ws_CO_18092025020026093757597007",
+          "ResultCode": 1037,
+          "ResultDesc": "No response from user."
+        }
+      }
+    }
   }
 ]
