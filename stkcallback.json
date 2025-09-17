@@ -181,5 +181,26 @@
         }
       }
     }
+  },
+  {
+    "receivedAt": "2025-09-17T22:36:01.875Z",
+    "body": {
+      "Body": {
+        "stkCallback": {
+          "MerchantRequestID": "9ba0-4845-bf5b-e11eb4372da63126",
+          "CheckoutRequestID": "ws_CO_18092025013545702757597007",
+          "ResultCode": 1032,
+          "ResultDesc": "Request Cancelled by user."
+        }
+      }
+    }
+  },
+  {
+    "receivedAt": "2025-09-17T22:36:24.074Z",
+    "body": {}
+  },
+  {
+    "receivedAt": "2025-09-17T22:37:35.624Z",
+    "body": {}
   }
 ]

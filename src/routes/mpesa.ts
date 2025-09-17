@@ -2,10 +2,10 @@
 
 
 import { Router, Request, Response } from "express";
-import axios from "axios";
-import fs from "fs";
+import * as fs from "fs";  // Change this line
 import moment from "moment";
 import dotenv from "dotenv";
+import axios from "axios"; // Add this if missing
 
 dotenv.config();
 
