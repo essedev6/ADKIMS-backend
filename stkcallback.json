@@ -168,5 +168,18 @@
         }
       }
     }
+  },
+  {
+    "receivedAt": "2025-09-17T21:45:11.274Z",
+    "body": {
+      "Body": {
+        "stkCallback": {
+          "MerchantRequestID": "d3d6-4877-9e8f-7fcd121bc94b7132",
+          "CheckoutRequestID": "ws_CO_18092025004502054757597007",
+          "ResultCode": 1032,
+          "ResultDesc": "Request Cancelled by user."
+        }
+      }
+    }
   }
 ]
