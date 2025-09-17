@@ -1,6 +1,5 @@
 // routes/mpesa.ts
-declare module 'fs';
-declare module 'moment';
+
 
 import { Router, Request, Response } from "express";
 import axios from "axios";
