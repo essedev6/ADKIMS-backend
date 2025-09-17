@@ -1,10 +1,9 @@
 import express from 'express';
 import cors from 'cors';
-import dotenv from 'dotenv';
+import mongoose from 'mongoose';
+import { serverConfig } from './config';
 import mpesaRoutes from './routes/mpesa';
-
-// Load environment variables
-dotenv.config();
+import { errorHandler } from './middleware/error';
 
 const app = express();
 
@@ -15,25 +14,27 @@ app.use(express.urlencoded({ extended: true }));
 
 // Health check route
 app.get('/', (req, res) => {
-  res.json({ status: 'ok', message: 'ADKIMS Backend API is running' });
+  res.json({ 
+    status: 'ok', 
+    message: 'ADKIMS Backend API is running',
+    environment: serverConfig.nodeEnv
+  });
 });
 
 // Mount routes
 app.use('/mpesa', mpesaRoutes);
 
-// Error handling middleware
-app.use((err: Error, req: express.Request, res: express.Response, next: express.NextFunction) => {
-  console.error(err.stack);
-  res.status(500).json({
-    success: false,
-    error: 'Internal Server Error'
-  });
-});
+// Error handling
+app.use(errorHandler);
+
+// Connect to MongoDB
+mongoose.connect(serverConfig.mongoUri)
+  .then(() => console.log('Connected to MongoDB'))
+  .catch(err => console.error('MongoDB connection error:', err));
 
 // Start server
-const PORT = process.env.PORT || 5000;
-app.listen(PORT, () => {
-  console.log(`Server running on port ${PORT}`);
+app.listen(serverConfig.port, () => {
+  console.log(`Server running on port ${serverConfig.port} in ${serverConfig.nodeEnv} mode`);
 });
 
 export default app;

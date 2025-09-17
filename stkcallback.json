@@ -1,0 +1,159 @@
+[
+  {
+    "receivedAt": "2025-09-17T20:25:54.073Z",
+    "body": {
+      "Body": {
+        "stkCallback": {
+          "MerchantRequestID": "f0ab-49c2-ab1d-1f9d840b305512458",
+          "CheckoutRequestID": "ws_CO_17092025232543250757597007",
+          "ResultCode": 0,
+          "ResultDesc": "The service request is processed successfully.",
+          "CallbackMetadata": {
+            "Item": [
+              {
+                "Name": "Amount",
+                "Value": 10
+              },
+              {
+                "Name": "MpesaReceiptNumber",
+                "Value": "TIH5E7ZVSZ"
+              },
+              {
+                "Name": "Balance"
+              },
+              {
+                "Name": "TransactionDate",
+                "Value": 20250917232552
+              },
+              {
+                "Name": "PhoneNumber",
+                "Value": 254757597007
+              }
+            ]
+          }
+        }
+      }
+    }
+  },
+  {
+    "receivedAt": "2025-09-17T20:33:50.210Z",
+    "body": {
+      "Body": {
+        "stkCallback": {
+          "MerchantRequestID": "cbe1-492f-b69d-1adfca6182912992",
+          "CheckoutRequestID": "ws_CO_17092025233337852757597007",
+          "ResultCode": 0,
+          "ResultDesc": "The service request is processed successfully.",
+          "CallbackMetadata": {
+            "Item": [
+              {
+                "Name": "Amount",
+                "Value": 20
+              },
+              {
+                "Name": "MpesaReceiptNumber",
+                "Value": "TIH8E8DMY2"
+              },
+              {
+                "Name": "Balance"
+              },
+              {
+                "Name": "TransactionDate",
+                "Value": 20250917233349
+              },
+              {
+                "Name": "PhoneNumber",
+                "Value": 254757597007
+              }
+            ]
+          }
+        }
+      }
+    }
+  },
+  {
+    "receivedAt": "2025-09-17T20:46:11.622Z",
+    "body": {
+      "Body": {
+        "stkCallback": {
+          "MerchantRequestID": "9ba0-4845-bf5b-e11eb4372da62537",
+          "CheckoutRequestID": "ws_CO_17092025234554768757597007",
+          "ResultCode": 0,
+          "ResultDesc": "The service request is processed successfully.",
+          "CallbackMetadata": {
+            "Item": [
+              {
+                "Name": "Amount",
+                "Value": 5
+              },
+              {
+                "Name": "MpesaReceiptNumber",
+                "Value": "TIH0E8WN8K"
+              },
+              {
+                "Name": "Balance"
+              },
+              {
+                "Name": "TransactionDate",
+                "Value": 20250917234610
+              },
+              {
+                "Name": "PhoneNumber",
+                "Value": 254757597007
+              }
+            ]
+          }
+        }
+      }
+    }
+  },
+  {
+    "receivedAt": "2025-09-17T21:07:31.179Z",
+    "body": {
+      "Body": {
+        "stkCallback": {
+          "MerchantRequestID": "cbe1-492f-b69d-1adfca6182913220",
+          "CheckoutRequestID": "ws_CO_18092025000704596757597007",
+          "ResultCode": 1037,
+          "ResultDesc": "No response from user."
+        }
+      }
+    }
+  },
+  {
+    "receivedAt": "2025-09-17T21:10:56.662Z",
+    "body": {
+      "Body": {
+        "stkCallback": {
+          "MerchantRequestID": "cbe1-492f-b69d-1adfca6182913245",
+          "CheckoutRequestID": "ws_CO_18092025001046694757597007",
+          "ResultCode": 0,
+          "ResultDesc": "The service request is processed successfully.",
+          "CallbackMetadata": {
+            "Item": [
+              {
+                "Name": "Amount",
+                "Value": 10
+              },
+              {
+                "Name": "MpesaReceiptNumber",
+                "Value": "TII3E9ZKDR"
+              },
+              {
+                "Name": "Balance"
+              },
+              {
+                "Name": "TransactionDate",
+                "Value": 20250918001055
+              },
+              {
+                "Name": "PhoneNumber",
+                "Value": 254757597007
+              }
+            ]
+          }
+        }
+      }
+    }
+  }
+]
