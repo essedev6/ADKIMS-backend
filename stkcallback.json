@@ -215,5 +215,104 @@
         }
       }
     }
+  },
+  {
+    "receivedAt": "2025-09-20T08:49:45.564Z",
+    "body": {}
+  },
+  {
+    "receivedAt": "2025-09-20T08:50:24.472Z",
+    "body": {
+      "Body": {
+        "stkCallback": {
+          "MerchantRequestID": "4fcc-4914-bbdf-274fb481b2ab14926",
+          "CheckoutRequestID": "ws_CO_20092025115007849757597007",
+          "ResultCode": 0,
+          "ResultDesc": "The service request is processed successfully.",
+          "CallbackMetadata": {
+            "Item": [
+              {
+                "Name": "Amount",
+                "Value": 5
+              },
+              {
+                "Name": "MpesaReceiptNumber",
+                "Value": "TIK4Q812ZC"
+              },
+              {
+                "Name": "Balance",
+                "Value": 0
+              },
+              {
+                "Name": "TransactionDate",
+                "Value": 20250920115023
+              },
+              {
+                "Name": "PhoneNumber",
+                "Value": 254757597007
+              }
+            ]
+          }
+        }
+      }
+    }
+  },
+  {
+    "receivedAt": "2025-09-20T08:50:31.417Z",
+    "body": {}
+  },
+  {
+    "receivedAt": "2025-09-20T09:27:29.355Z",
+    "body": {
+      "Body": {
+        "stkCallback": {
+          "MerchantRequestID": "599e-470f-b3e1-4faa1d7ffaf010561",
+          "CheckoutRequestID": "ws_CO_20092025122703146757597007",
+          "ResultCode": 1037,
+          "ResultDesc": "No response from user."
+        }
+      }
+    }
+  },
+  {
+    "receivedAt": "2025-09-20T09:28:45.197Z",
+    "body": {
+      "Body": {
+        "stkCallback": {
+          "MerchantRequestID": "4fcc-4914-bbdf-274fb481b2ab15244",
+          "CheckoutRequestID": "ws_CO_20092025122827473757597007",
+          "ResultCode": 0,
+          "ResultDesc": "The service request is processed successfully.",
+          "CallbackMetadata": {
+            "Item": [
+              {
+                "Name": "Amount",
+                "Value": 5
+              },
+              {
+                "Name": "MpesaReceiptNumber",
+                "Value": "TIK0QEKKVE"
+              },
+              {
+                "Name": "Balance",
+                "Value": 0
+              },
+              {
+                "Name": "TransactionDate",
+                "Value": 20250920122844
+              },
+              {
+                "Name": "PhoneNumber",
+                "Value": 254757597007
+              }
+            ]
+          }
+        }
+      }
+    }
+  },
+  {
+    "receivedAt": "2025-09-20T09:29:18.278Z",
+    "body": {}
   }
 ]

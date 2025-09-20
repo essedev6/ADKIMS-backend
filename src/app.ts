@@ -22,7 +22,7 @@ app.get('/', (req, res) => {
 });
 
 // Mount routes
-app.use('/mpesa', mpesaRoutes);
+app.use('/esse', mpesaRoutes);
 
 // Error handling
 app.use(errorHandler);
