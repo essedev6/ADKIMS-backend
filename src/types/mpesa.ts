@@ -10,9 +10,11 @@ export interface MpesaConfig {
 }
 
 export interface STKPushRequest {
-  phone: string;
+  phoneNumber: string;
   amount: number;
-  accountNumber?: string;
+  accountReference?: string;
+  transactionDesc?: string;
+  callbackUrl?: string;
 }
 
 export interface STKPushResponse {

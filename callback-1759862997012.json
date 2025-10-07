@@ -1,0 +1,10 @@
+{
+  "Body": {
+    "stkCallback": {
+      "MerchantRequestID": "7044-4916-b865-aa2fb984095413651",
+      "CheckoutRequestID": "ws_CO_07102025214929680759797007",
+      "ResultCode": 1037,
+      "ResultDesc": "No response from user."
+    }
+  }
+}

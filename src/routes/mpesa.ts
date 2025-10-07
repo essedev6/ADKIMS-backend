@@ -1,11 +1,11 @@
-// routes/mpesa.ts
-
-
 import { Router, Request, Response } from "express";
-import * as fs from "fs";  // Change this line
+import * as fs from "fs";
 import moment from "moment";
 import dotenv from "dotenv";
-import axios from "axios"; // Add this if missing
+import axios from "axios";
+import mongoose from "mongoose";
+import { Payment } from "../models";
+import { TransactionService } from "../services/TransactionService";
 
 dotenv.config();
 
@@ -44,14 +44,9 @@ router.post("/debug/normalize", (req: Request, res: Response) => {
  */
 function normalizePhone(input: string): string {
   let s = String(input || "").trim();
-  // remove all non-digits except leading +
-  s = s.replace(/^\+/, ""); // drop leading plus if any
-  s = s.replace(/\D/g, ""); // keep digits only
+  s = s.replace(/^\+/, "");
+  s = s.replace(/\D/g, "");
 
-  // cases:
-  // 07XXXXXXXX => 2547XXXXXXXX
-  // 7XXXXXXXX  => 2547XXXXXXXX
-  // 2547XXXXXXXX => unchanged
   if (s.length === 10 && s.startsWith("07")) {
     s = "254" + s.slice(1);
   } else if (s.length === 9 && s.startsWith("7")) {
@@ -59,7 +54,6 @@ function normalizePhone(input: string): string {
   } else if (s.length === 12 && s.startsWith("254")) {
     // already ok
   } else if (s.length > 12 && s.startsWith("254")) {
-    // sometimes people paste country code and extra chars — keep first 12 digits
     s = s.slice(0, 12);
   }
 
@@ -71,19 +65,15 @@ function normalizePhone(input: string): string {
  */
 router.post("/stkpush", async (req: Request, res: Response) => {
   try {
-    const { phone: rawPhone, amount: rawAmount, accountNumber } = req.body;
+    const { phone: rawPhone, amount: rawAmount, accountNumber, userId, planId } = req.body;
     const accountRef = accountNumber || "ADKIMS HOTSPOT";
 
-    // basic presence checks
     if (!rawPhone) return res.status(400).json({ error: "Phone is required" });
     if (rawAmount === undefined || rawAmount === null) return res.status(400).json({ error: "Amount is required" });
 
-    // normalize phone
     const phone = normalizePhone(String(rawPhone));
 
-    // enforce safaricom format 2547XXXXXXXX
     if (!/^2547\d{8}$/.test(phone)) {
-      // helpful debug info returned to client
       return res.status(400).json({
         error: "Invalid phone format. Expected 2547XXXXXXXX (12 digits).",
         received: phone,
@@ -91,42 +81,34 @@ router.post("/stkpush", async (req: Request, res: Response) => {
       });
     }
 
-    // amount -> number
     const amountNum = typeof rawAmount === "number" ? rawAmount : Number(rawAmount);
     if (Number.isNaN(amountNum) || amountNum <= 0) {
       return res.status(400).json({ error: "Invalid amount. Must be a positive number." });
     }
 
-    // get token
     const token = await getAccessToken();
     const timestamp = moment().format("YYYYMMDDHHmmss");
     const password = Buffer.from(
       (process.env.MPESA_SHORTCODE ?? "") + (process.env.MPESA_PASSKEY ?? "") + timestamp
     ).toString("base64");
 
-    // Build payload exactly as Daraja expects
     const payload = {
       BusinessShortCode: process.env.MPESA_SHORTCODE,
       Password: password,
       Timestamp: timestamp,
       TransactionType: "CustomerPayBillOnline",
       Amount: amountNum,
-      PartyA: phone, // customer MSISDN in 2547... format
+      PartyA: phone,
       PartyB: process.env.MPESA_SHORTCODE,
       PhoneNumber: phone,
       CallBackURL: process.env.CALLBACK_URL,
-      ConfirmationURL: process.env.CONFIRMATION_URL,
-      ValidationURL: process.env.VALIDATION_URL,
       AccountReference: accountRef,
       TransactionDesc: "ADKIMS HOTSPOT payment",
     };
 
-    // LOG the payload (useful to see what we send to Safaricom)
     console.log("=== STK PUSH OUTGOING PAYLOAD ===");
     console.log(JSON.stringify(payload, null, 2));
-    console.log("Auth header: Bearer <token hidden>");
 
-    // send to Safaricom (sandbox)
     const url = process.env.MPESA_ENV === "production"
       ? "https://api.safaricom.co.ke/mpesa/stkpush/v1/processrequest"
       : "https://sandbox.safaricom.co.ke/mpesa/stkpush/v1/processrequest";
@@ -140,24 +122,49 @@ router.post("/stkpush", async (req: Request, res: Response) => {
         timeout: 15000,
       });
 
-      // log full success response for debugging
       console.log("=== MPESA RESPONSE ===");
       console.log(mpesaResp.status, mpesaResp.statusText);
       console.log(JSON.stringify(mpesaResp.data, null, 2));
 
-      // reply to client
-      return res.json({ success: true, response: mpesaResp.data });
+      // Create payment record - FIXED: Provide default userId and planId
+      try {
+        // Create dummy ObjectIds if not provided
+        const paymentUserId = userId || new mongoose.Types.ObjectId();
+        const paymentPlanId = planId || new mongoose.Types.ObjectId();
+        
+        const payment = new Payment({
+          userId: paymentUserId,
+          planId: paymentPlanId,
+          amount: amountNum,
+          phoneNumber: phone,
+          merchantRequestId: mpesaResp.data.MerchantRequestID,
+          checkoutRequestId: mpesaResp.data.CheckoutRequestID,
+          status: 'pending'
+        });
+        await payment.save();
+        console.log("✅ Payment record created:", payment._id);
+      } catch (dbError: any) {
+        console.error("❌ Failed to create payment record:", dbError.message);
+        // Don't fail the entire request if DB save fails
+      }
+
+      // Return success response to client
+      return res.json({ 
+        success: true, 
+        message: "STK push initiated successfully",
+        checkoutRequestId: mpesaResp.data.CheckoutRequestID,
+        merchantRequestId: mpesaResp.data.MerchantRequestID,
+        response: mpesaResp.data 
+      });
     } catch (mpesaError: any) {
-      // capture exact mpesa response body (usually contains validation errors)
       const mpesaBody = mpesaError?.response?.data ?? mpesaError?.message ?? "No response body";
       console.error("MPESA ERROR STATUS:", mpesaError?.response?.status);
       console.error("MPESA ERROR BODY:", JSON.stringify(mpesaBody, null, 2));
 
-      // return mpesa body to client (very helpful when debugging)
       return res.status(mpesaError?.response?.status || 500).json({
         success: false,
+        error: mpesaBody?.errorMessage || mpesaBody?.ResultDesc || "MPESA API error",
         mpesaError: mpesaBody,
-        payloadSent: payload,
       });
     }
   } catch (error: any) {
@@ -167,50 +174,128 @@ router.post("/stkpush", async (req: Request, res: Response) => {
 });
 
 /**
- * STK Callback (C2B / STK responses from Safaricom)
+ * STK Callback (C2B / STK responses from Safaricom) - UPDATED to save callback data
  */
-router.all("/callback", (req: Request, res: Response) => {
+router.post("/callback", async (req: Request, res: Response) => {
   console.log("✅ STK Callback Received:", req.method);
-  console.log(JSON.stringify(req.body, null, 2));
+  console.log("Callback Body:", JSON.stringify(req.body, null, 2));
 
   try {
-    // write to disk (append)
-    const cb = req.body ?? {};
-    let logs: any[] = [];
-    if (fs.existsSync("stkcallback.json")) {
-      try {
-        const raw = fs.readFileSync("stkcallback.json", "utf8");
-        logs = raw ? JSON.parse(raw) : [];
-        if (!Array.isArray(logs)) logs = [];
-      } catch {
-        logs = [];
+    const callbackData = req.body;
+    
+    // Log the callback for debugging
+    fs.writeFileSync(`callback-${Date.now()}.json`, JSON.stringify(callbackData, null, 2));
+    
+    // Check if this is an STK callback
+    if (callbackData.Body && callbackData.Body.stkCallback) {
+      const stkCallback = callbackData.Body.stkCallback;
+      const resultCode = stkCallback.ResultCode;
+      const resultDesc = stkCallback.ResultDesc;
+      const checkoutRequestId = stkCallback.CheckoutRequestID;
+      const callbackMetadata = stkCallback.CallbackMetadata;
+      
+      console.log("STK Callback Details:", {
+        resultCode,
+        resultDesc,
+        checkoutRequestId
+      });
+
+      // Extract callback metadata and receipt number
+      let extractedMetadata = {};
+      let mpesaReceiptNumber = "";
+      
+      if (callbackMetadata && callbackMetadata.Item) {
+        callbackMetadata.Item.forEach((item: any) => {
+          extractedMetadata[item.Name] = item.Value;
+          if (item.Name === "MpesaReceiptNumber") {
+            mpesaReceiptNumber = item.Value;
+          }
+        });
+      }
+
+      console.log("📋 Extracted Callback Metadata:", extractedMetadata);
+      console.log("🧾 M-Pesa Receipt:", mpesaReceiptNumber);
+
+      // Update payment status based on result
+      if (resultCode === 0) {
+        // Payment successful
+        console.log("✅ Payment successful for CheckoutRequestID:", checkoutRequestId);
+
+        // Update payment record WITH CALLBACK DATA
+        const updatedPayment = await Payment.findOneAndUpdate(
+          { checkoutRequestId: checkoutRequestId },
+          { 
+            status: 'completed',
+            resultCode: resultCode,
+            resultDesc: resultDesc,
+            mpesaReceiptNumber: mpesaReceiptNumber,
+            callbackPayload: callbackData, // SAVE COMPLETE CALLBACK
+            callbackMetadata: extractedMetadata, // SAVE EXTRACTED METADATA
+            completedAt: new Date()
+          },
+          { new: true } // Return the updated document
+        );
+
+        if (updatedPayment) {
+          console.log("✅ Payment completed successfully in database:", updatedPayment._id);
+          console.log("💾 Callback data saved to database");
+        } else {
+          console.log("⚠️ Payment not found for checkoutRequestId:", checkoutRequestId);
+          // If payment not found, use TransactionService to create it from callback
+          const transactionService = TransactionService.getInstance();
+          await transactionService.logTransaction(callbackData);
+        }
+
+      } else {
+        // Payment failed
+        console.log("❌ Payment failed for CheckoutRequestID:", checkoutRequestId, "Reason:", resultDesc);
+        
+        const updatedPayment = await Payment.findOneAndUpdate(
+          { checkoutRequestId: checkoutRequestId },
+          { 
+            status: 'failed',
+            resultCode: resultCode,
+            resultDesc: resultDesc,
+            callbackPayload: callbackData, // SAVE COMPLETE CALLBACK EVEN FOR FAILED
+            callbackMetadata: extractedMetadata // SAVE EXTRACTED METADATA
+          },
+          { new: true }
+        );
+
+        if (!updatedPayment) {
+          console.log("⚠️ Payment not found for failed checkoutRequestId:", checkoutRequestId);
+        }
       }
     }
 
-    logs.push({ receivedAt: new Date().toISOString(), body: cb });
-    fs.writeFileSync("stkcallback.json", JSON.stringify(logs, null, 2));
-
-    // respond to Safaricom immediately
-    return res.status(200).json({ ResultCode: 0, ResultDesc: "Accepted" });
-  } catch (e) {
-    console.error("Callback handler error:", e);
-    return res.status(500).json({ ResultCode: 1, ResultDesc: "Server Error" });
+    // Always respond with success to Safaricom
+    return res.status(200).json({ 
+      ResultCode: 0, 
+      ResultDesc: "Success" 
+    });
+  } catch (error) {
+    console.error("Callback handler error:", error);
+    // Still respond with success to Safaricom even if we have internal errors
+    return res.status(200).json({ 
+      ResultCode: 0, 
+      ResultDesc: "Success" 
+    });
   }
 });
 
 /**
- * Simple C2B confirmation & validation endpoints (mirror for RegisterURL)
+ * Simple C2B confirmation & validation endpoints
  */
-router.all("/confirmation", (req: Request, res: Response) => {
+router.post("/confirmation", (req: Request, res: Response) => {
   console.log("C2B Confirmation:", JSON.stringify(req.body, null, 2));
   fs.writeFileSync("confirmation.json", JSON.stringify(req.body, null, 2));
-  res.status(200).json({ ResultCode: 0, ResultDesc: "Confirmation received" });
+  res.status(200).json({ ResultCode: 0, ResultDesc: "Success" });
 });
 
-router.all("/validation", (req: Request, res: Response) => {
+router.post("/validation", (req: Request, res: Response) => {
   console.log("C2B Validation:", JSON.stringify(req.body, null, 2));
   fs.writeFileSync("validation.json", JSON.stringify(req.body, null, 2));
-  res.status(200).json({ ResultCode: 0, ResultDesc: "Validation successful" });
+  res.status(200).json({ ResultCode: 0, ResultDesc: "Success" });
 });
 
 export default router;

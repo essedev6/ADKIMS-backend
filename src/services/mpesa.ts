@@ -25,7 +25,7 @@ class MpesaService {
       });
 
       this.auth = response.data.access_token;
-      this.authExpiry = Date.now() + (response.data.expires_in * 1000) - 60000; // Expire 1 minute early
+      this.authExpiry = Date.now() + (response.data.expires_in * 1000) - 60000;
       return this.auth;
     } catch (error) {
       console.error('Failed to get Mpesa auth token:', error);
@@ -34,23 +34,21 @@ class MpesaService {
   }
 
   private validatePhone(phone: string): string {
-    // Remove any spaces or special characters
     let cleaned = phone.replace(/[^0-9]/g, '');
     
-    // If number starts with 0, replace with 254
     if (cleaned.startsWith('0')) {
       cleaned = '254' + cleaned.slice(1);
     }
     
-    // If number starts with +, remove it
     if (cleaned.startsWith('+')) {
       cleaned = cleaned.slice(1);
     }
     
-    // Validate the format (must be 12 digits starting with 254)
-    const phoneRegex = /^254[7,1][0-9]{8}$/;
+    // FIXED: Proper regex for Safaricom numbers
+    const phoneRegex = /^254(7|10|11)[0-9]{8}$/;
+    
     if (!phoneRegex.test(cleaned)) {
-      throw new Error('Invalid phone number format. Must be a valid Kenyan phone number.');
+      throw new Error(`Invalid Safaricom number. Expected format: 2547XXXXXXXX, 25410XXXXXXXX, or 25411XXXXXXXX. Received: ${cleaned}`);
     }
     
     return cleaned;
@@ -63,12 +61,13 @@ class MpesaService {
     if (amount <= 0) {
       throw new Error('Amount must be greater than 0');
     }
-    return Math.round(amount); // Ensure whole number
+    return Math.round(amount);
   }
 
   async initiateSTKPush(data: STKPushRequest): Promise<STKPushResponse> {
     try {
-      const phone = this.validatePhone(data.phone);
+      console.log('Initiating STK Push with data:', data);
+      const phone = this.validatePhone(data.phoneNumber);
       const amount = this.validateAmount(data.amount);
       
       const timestamp = new Date().toISOString().replace(/[^0-9]/g, '').slice(0, -3);
@@ -76,22 +75,34 @@ class MpesaService {
         `${mpesaConfig.shortcode}${mpesaConfig.passkey}${timestamp}`
       ).toString('base64');
 
+      // Get auth token
+      console.log('Getting M-Pesa auth token...');
       const token = await this.getAuth();
+      console.log('Auth token received');
+
+      // Prepare request payload
+      const payload = {
+        BusinessShortCode: mpesaConfig.shortcode,
+        Password: password,
+        Timestamp: timestamp,
+        TransactionType: 'CustomerPayBillOnline',
+        Amount: amount,
+        PartyA: phone,
+        PartyB: mpesaConfig.shortcode,
+        PhoneNumber: phone,
+        CallBackURL: data.callbackUrl || mpesaConfig.callbackUrl,
+        AccountReference: data.accountReference || 'ADKIMS',
+        TransactionDesc: data.transactionDesc || 'Internet Service Payment'
+      };
+
+      console.log('Sending M-Pesa request with payload:', {
+        ...payload,
+        Password: '******' // Hide sensitive data in logs
+      });
+
       const response = await axios.post(
         `${this.baseUrl}/mpesa/stkpush/v1/processrequest`,
-        {
-          BusinessShortCode: mpesaConfig.shortcode,
-          Password: password,
-          Timestamp: timestamp,
-          TransactionType: 'CustomerPayBillOnline',
-          Amount: amount,
-          PartyA: phone,
-          PartyB: mpesaConfig.shortcode,
-          PhoneNumber: phone,
-          CallBackURL: mpesaConfig.callbackUrl,
-          AccountReference: data.accountNumber || 'ADKIMS',
-          TransactionDesc: 'Internet Service Payment'
-        },
+        payload,
         {
           headers: {
             Authorization: `Bearer ${token}`,
