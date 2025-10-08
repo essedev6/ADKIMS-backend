@@ -23,9 +23,7 @@ mongoose.connect(MONGODB_URI)
     console.error('MongoDB connection error:', error);
   });
 
-  // In your main server file, after database connection
-const planTemplateService = PlanTemplateService.getInstance(server);
-planTemplateService.createTemplatesFromExistingPlans().catch(console.error);
+
 
 // Health check endpoint
 app.get('/health', (req, res) => {

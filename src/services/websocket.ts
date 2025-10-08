@@ -84,6 +84,11 @@ export class WebSocketService {
       });
   }
 
+  // Add this missing method
+  public notifyPaymentUpdate(paymentData: any): void {
+    this.io.emit('payment-updated', paymentData);
+  }
+
   public emitPaymentUpdate(payment: any): void {
     this.io.emit('payment:update', payment);
   }

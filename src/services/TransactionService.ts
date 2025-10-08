@@ -2,17 +2,42 @@ import mongoose from 'mongoose';
 import { Payment } from '../models';
 import { WebSocketService } from './websocket';
 
+// Type assertion interface for Payment with timestamps
+interface IPaymentWithTimestamps {
+  _id: mongoose.Types.ObjectId;
+  userId: mongoose.Types.ObjectId;
+  planId?: mongoose.Types.ObjectId;
+  planName: string;
+  amount: number;
+  status: 'pending' | 'completed' | 'failed';
+  phoneNumber: string;
+  merchantRequestId?: string;
+  checkoutRequestId?: string;
+  mpesaReceiptNumber?: string;
+  resultCode?: number;
+  resultDesc?: string;
+  callbackMetadata?: Map<string, any>;
+  callbackPayload?: any;
+  retryCount: number;
+  lastRetryAt?: Date;
+  createdAt: Date;
+  updatedAt: Date;
+}
+
 export class TransactionService {
   private static instance: TransactionService;
   private wsService: WebSocketService;
 
-  private constructor() {
-    this.wsService = WebSocketService.getInstance();
+  private constructor(server: any) {
+    this.wsService = WebSocketService.getInstance(server);
   }
 
-  public static getInstance(): TransactionService {
+  public static getInstance(server?: any): TransactionService {
     if (!TransactionService.instance) {
-      TransactionService.instance = new TransactionService();
+      if (!server) {
+        throw new Error('Server instance is required for first initialization');
+      }
+      TransactionService.instance = new TransactionService(server);
     }
     return TransactionService.instance;
   }
@@ -59,6 +84,7 @@ export class TransactionService {
       const paymentData = {
         userId: new mongoose.Types.ObjectId(),
         planId: new mongoose.Types.ObjectId(),
+        planName: 'MPesa Payment', // Required field
         amount: amount,
         phoneNumber: phoneNumber,
         merchantRequestId: stkCallback?.MerchantRequestID,
@@ -68,7 +94,8 @@ export class TransactionService {
         resultDesc: stkCallback?.ResultDesc,
         mpesaReceiptNumber: mpesaReceiptNumber,
         callbackPayload: callbackData,
-        callbackMetadata: callbackMetadata
+        callbackMetadata: callbackMetadata,
+        retryCount: 0 // Required field
       };
 
       console.log('📄 Payment data to save:', JSON.stringify(paymentData, null, 2));
@@ -81,7 +108,7 @@ export class TransactionService {
       console.log('📡 MongoDB connection state:', mongoose.connection.readyState);
       console.log('📡 MongoDB connection host:', mongoose.connection.host);
 
-      const savedPayment = await paymentRecord.save();
+      const savedPayment = await paymentRecord.save() as unknown as IPaymentWithTimestamps;
       
       console.log('🎉 SUCCESS: Raw callback saved to MongoDB with ID:', savedPayment._id);
       console.log('📊 Payment status:', savedPayment.status);
@@ -96,7 +123,8 @@ export class TransactionService {
           amount: savedPayment.amount,
           phoneNumber: savedPayment.phoneNumber,
           mpesaReceiptNumber: savedPayment.mpesaReceiptNumber,
-          resultDesc: savedPayment.resultDesc
+          resultDesc: savedPayment.resultDesc,
+          createdAt: savedPayment.createdAt
         });
         
         console.log('🎊 Payment completed and fully processed!');
@@ -261,9 +289,15 @@ export class TransactionService {
       const payments = await Payment.find()
         .sort({ createdAt: -1 })
         .select('amount phoneNumber status resultDesc mpesaReceiptNumber callbackPayload createdAt')
-        .limit(50);
+        .limit(50) as unknown as IPaymentWithTimestamps[];
       
       console.log(`📊 Found ${payments.length} payments in database`);
+      
+      // Access createdAt without TypeScript errors
+      if (payments.length > 0) {
+        console.log('🕒 Sample createdAt:', payments[0].createdAt);
+      }
+      
       return payments;
     } catch (error) {
       console.error('❌ Error fetching payments:', error);
@@ -278,12 +312,14 @@ export class TransactionService {
     try {
       console.log(`🔍 Fetching payment ${paymentId} from MongoDB...`);
       const payment = await Payment.findById(paymentId)
-        .select('amount phoneNumber status resultDesc mpesaReceiptNumber callbackPayload callbackMetadata createdAt');
+        .select('amount phoneNumber status resultDesc mpesaReceiptNumber callbackPayload callbackMetadata createdAt') as unknown as IPaymentWithTimestamps;
       
       if (!payment) {
         console.log(`❌ Payment ${paymentId} not found in MongoDB`);
+        return null;
       } else {
         console.log(`✅ Payment ${paymentId} found in MongoDB`);
+        console.log('🕒 Created at:', payment.createdAt);
       }
       
       return payment;
@@ -304,6 +340,7 @@ export class TransactionService {
       const testData = {
         userId: new mongoose.Types.ObjectId(),
         planId: new mongoose.Types.ObjectId(),
+        planName: 'Test Plan',
         amount: 100,
         phoneNumber: "254700000000",
         merchantRequestId: "test-merchant-" + Date.now(),
@@ -313,21 +350,23 @@ export class TransactionService {
         resultDesc: "Test payment",
         mpesaReceiptNumber: "TEST123",
         callbackPayload: { test: true },
-        callbackMetadata: { Amount: 100, PhoneNumber: "254700000000" }
+        callbackMetadata: { Amount: 100, PhoneNumber: "254700000000" },
+        retryCount: 0
       };
 
       console.log('📄 Test data:', testData);
       
       const testPayment = new Payment(testData);
-      const saved = await testPayment.save();
+      const saved = await testPayment.save() as unknown as IPaymentWithTimestamps;
       
       console.log('✅ Test payment saved successfully:', saved._id);
+      console.log('🕒 Created at:', saved.createdAt);
       
       // Clean up test data
       await Payment.deleteOne({ _id: saved._id });
       console.log('🧹 Test payment cleaned up');
       
-      return { success: true, paymentId: saved._id };
+      return { success: true, paymentId: saved._id, createdAt: saved.createdAt };
     } catch (error: any) {
       console.error('❌ Test payment failed:', error.message);
       console.error('❌ Full error:', error);
