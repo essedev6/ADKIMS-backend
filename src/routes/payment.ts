@@ -1,9 +1,8 @@
 import { Router } from 'express';
-import { TransactionService } from '../services/transaction';
+import { transactionService } from '../app';
 import { mpesaService } from '../services/mpesa';
 
 const router = Router();
-const transactionService = TransactionService.getInstance();
 
 // Initiate payment
 router.post('/initiate', async (req, res) => {

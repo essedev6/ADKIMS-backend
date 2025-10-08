@@ -11,6 +11,8 @@ import planTemplateRoutes from './routes/planTemplate';
 import planPageRoutes from './routes/planPage';
 import { errorHandler } from './middleware/error';
 import { WebSocketService } from './services/websocket';
+import { PlanTemplateService } from './services/PlanTemplateService';
+import { TransactionService } from './services/transaction';
 
 const app = express();
 
@@ -57,10 +59,16 @@ const server = createServer(app);
 // Initialize WebSocket service
 const wsService = WebSocketService.getInstance(server);
 
+// Initialize PlanTemplateService
+const planTemplateService = PlanTemplateService.getInstance(server);
+
+// Initialize TransactionService
+const transactionService = TransactionService.getInstance(server);
+
 // Start server
 server.listen(serverConfig.port, () => {
   console.log(`Server running on port ${serverConfig.port} in ${serverConfig.nodeEnv} mode`);
   console.log('WebSocket server initialized');
 });
 
-export { app, wsService };
+export { app, wsService, planTemplateService, transactionService };

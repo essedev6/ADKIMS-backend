@@ -1,5 +1,7 @@
 import { Plan } from '../models/Plan';
 import { WebSocketService } from './websocket';
+import { Server } from 'http';
+import PlanTemplate, { IPlanTemplate } from '../models/PlanTemplate';
 
 interface PlanTemplate {
   id: string;
@@ -13,53 +15,95 @@ interface PlanTemplate {
   }[];
 }
 
-const planTemplates: PlanTemplate[] = [
-  {
-    id: 'outdoor',
-    name: 'Outdoor Hotspot Plan',
-    type: 'outdoor',
-    plans: [
-      { price: 5, duration: '30', timeUnit: 'mins' },
-      { price: 10, duration: '3', timeUnit: 'hrs' },
-      { price: 20, duration: '7', timeUnit: 'hrs' },
-      { price: 39, duration: '12', timeUnit: 'hrs' },
-      { price: 75, duration: '24', timeUnit: 'hrs' },
-      { price: 130, duration: '3', timeUnit: 'days' },
-      { price: 375, duration: '7', timeUnit: 'days' },
-      { price: 950, duration: '1', timeUnit: 'month' }
-    ]
-  },
-  {
-    id: 'homeowner',
-    name: 'Homeowner Monthly Plan',
-    type: 'homeowner',
-    plans: [
-      { price: 1999, bandwidth: 10 },
-      { price: 2999, bandwidth: 20 },
-      { price: 3999, bandwidth: 30 },
-      { price: 4999, bandwidth: 50 },
-      { price: 5999, bandwidth: 70 },
-      {price: 6999, bandwidth: 90 },
-      {price: 7999, bandwidth: 100 }
-
-
-    ]
-  }
-];
-
 export class PlanTemplateService {
   private static instance: PlanTemplateService;
   private wsService: WebSocketService;
 
-  private constructor() {
-    this.wsService = WebSocketService.getInstance();
+  private constructor(server: Server) {
+    this.wsService = WebSocketService.getInstance(server);
   }
 
-  public static getInstance(): PlanTemplateService {
+  public static getInstance(server: Server): PlanTemplateService {
     if (!PlanTemplateService.instance) {
-      PlanTemplateService.instance = new PlanTemplateService();
+      PlanTemplateService.instance = new PlanTemplateService(server);
     }
     return PlanTemplateService.instance;
+  }
+
+  public async getAllPlanTemplates(): Promise<IPlanTemplate[]> {
+    return PlanTemplate.find();
+  }
+
+  public async getPlanTemplateById(id: string): Promise<IPlanTemplate | null> {
+    return PlanTemplate.findById(id);
+  }
+
+  public async createPlanTemplate(data: Partial<IPlanTemplate>): Promise<IPlanTemplate> {
+    const newTemplate = new PlanTemplate(data);
+    await newTemplate.save();
+    return newTemplate;
+  }
+
+  public async updatePlanTemplate(id: string, data: Partial<IPlanTemplate>): Promise<IPlanTemplate | null> {
+    return PlanTemplate.findByIdAndUpdate(id, data, { new: true });
+  }
+
+  public async deletePlanTemplate(id: string): Promise<boolean> {
+    const result = await PlanTemplate.findByIdAndDelete(id);
+    return result !== null;
+  }
+
+  // NEW METHOD: Create templates from existing plans
+  public async createTemplatesFromExistingPlans(): Promise<void> {
+    try {
+      console.log('🔄 Creating PlanTemplate documents from existing plans...');
+
+      // Create Outdoor Template
+      const outdoorPlans = await Plan.find({ type: 'outdoor' });
+      console.log('Found outdoor plans:', outdoorPlans.length);
+      
+      if (outdoorPlans.length > 0) {
+        const outdoorTemplate = new PlanTemplate({
+          name: 'Outdoor Hotspot Plan',
+          type: 'outdoor',
+          plans: outdoorPlans.map(plan => ({
+            price: plan.price,
+            bandwidth: plan.bandwidthLimit,
+            duration: plan.timeLimit ? Math.floor(plan.timeLimit / 86400).toString() : '30',
+            timeUnit: 'days'
+          }))
+        });
+        await outdoorTemplate.save();
+        console.log('✅ Created outdoor template with', outdoorPlans.length, 'plans');
+      }
+
+      // Create Homeowner Template  
+      const homeownerPlans = await Plan.find({ type: 'homeowner' });
+      console.log('Found homeowner plans:', homeownerPlans.length);
+      
+      if (homeownerPlans.length > 0) {
+        const homeownerTemplate = new PlanTemplate({
+          name: 'Homeowner Monthly Plan',
+          type: 'homeowner', 
+          plans: homeownerPlans.map(plan => ({
+            price: plan.price,
+            bandwidth: plan.bandwidthLimit,
+            duration: '30',
+            timeUnit: 'days'
+          }))
+        });
+        await homeownerTemplate.save();
+        console.log('✅ Created homeowner template with', homeownerPlans.length, 'plans');
+      }
+
+      // Verify
+      const allTemplates = await PlanTemplate.find();
+      console.log('📋 Total PlanTemplate documents:', allTemplates.length);
+      
+    } catch (error) {
+      console.error('Error creating templates from plans:', error);
+      throw error; // Re-throw to handle in the route
+    }
   }
 
   private convertDurationToSeconds(duration: string, unit: string): number {
@@ -100,10 +144,34 @@ export class PlanTemplateService {
 
   public async applyTemplate(templateId: string): Promise<boolean> {
     try {
-      const template = planTemplates.find(t => t.id === templateId);
+      console.log('🔍 === DEBUG TEMPLATE SEARCH ===');
+      console.log('Searching for template with:', templateId);
+      console.log('Template ID type:', typeof templateId);
+      
+      // List ALL templates with all fields
+      const allTemplates = await PlanTemplate.find().lean();
+      console.log('📋 ALL TEMPLATES IN DATABASE:');
+      allTemplates.forEach((template, index) => {
+        console.log(`Template ${index + 1}:`);
+        console.log('  _id:', template._id);
+        console.log('  type:', template.type);
+        console.log('  name:', template.name);
+        console.log('  ---');
+      });
+
+      // FIX: Search by type instead of _id
+      const template = await PlanTemplate.findOne({ type: templateId });
+      console.log('🔎 Search result by type:', template);
+      
       if (!template) {
+        console.log('❌ TEMPLATE NOT FOUND!');
+        console.log('Available types:', allTemplates.map(t => t.type));
+        console.log('Requested type:', templateId);
         throw new Error('Template not found');
       }
+
+      console.log('✅ Template found:', template.name);
+      console.log('=== END DEBUG ===');
 
       // Delete existing plans of the same type
       await Plan.deleteMany({ type: template.type });
@@ -175,11 +243,9 @@ export class PlanTemplateService {
         { upsert: true, new: true }
       );
 
-      // Notify clients of plan updates
-      this.wsService.emitPlansUpdate();
       return true;
     } catch (error) {
-      console.error('Error applying template:', error);
+      console.error('Error applying plan template:', error);
       return false;
     }
   }

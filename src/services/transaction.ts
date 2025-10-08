@@ -3,20 +3,21 @@ import path from 'path';
 import { Payment, GuestUser, Session, User } from '../models';
 import { WebSocketService } from './websocket';
 import mongoose from 'mongoose';
+import { Server } from 'http';
 
 export class TransactionService {
   private static instance: TransactionService;
   private wsService: WebSocketService;
   private callbackLogPath: string;
 
-  private constructor() {
-    this.wsService = WebSocketService.getInstance();
+  private constructor(server: Server) {
+    this.wsService = WebSocketService.getInstance(server);
     this.callbackLogPath = path.join(process.cwd(), 'stkcallback.json');
   }
 
-  public static getInstance(): TransactionService {
+  public static getInstance(server: Server): TransactionService {
     if (!TransactionService.instance) {
-      TransactionService.instance = new TransactionService();
+      TransactionService.instance = new TransactionService(server);
     }
     return TransactionService.instance;
   }
@@ -44,7 +45,7 @@ export class TransactionService {
         });
 
         console.log('Guest user created:', guestUser);
-        userId = guestUser._id;
+        userId = guestUser._id.toString();
       }
 
       console.log('Using userId:', userId);
