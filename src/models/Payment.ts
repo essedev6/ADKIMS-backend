@@ -17,6 +17,8 @@ export interface IPayment extends Document {
   callbackPayload?: any;
   retryCount: number;
   lastRetryAt?: Date;
+   createdAt: Date;
+  updatedAt: Date;
 }
 
 const paymentSchema = new Schema<IPayment>({

@@ -126,7 +126,7 @@ router.post("/stkpush", async (req: Request, res: Response) => {
       console.log(mpesaResp.status, mpesaResp.statusText);
       console.log(JSON.stringify(mpesaResp.data, null, 2));
 
-      // Create payment record - FIXED: Provide default userId and planId
+      // Create payment record - FIXED: Provide ALL required fields
       try {
         // Create dummy ObjectIds if not provided
         const paymentUserId = userId || new mongoose.Types.ObjectId();
@@ -135,16 +135,27 @@ router.post("/stkpush", async (req: Request, res: Response) => {
         const payment = new Payment({
           userId: paymentUserId,
           planId: paymentPlanId,
+          planName: 'Direct Payment', // ✅ ADDED REQUIRED FIELD
           amount: amountNum,
           phoneNumber: phone,
           merchantRequestId: mpesaResp.data.MerchantRequestID,
           checkoutRequestId: mpesaResp.data.CheckoutRequestID,
-          status: 'pending'
+          status: 'pending',
+          retryCount: 0 // ✅ ADDED EXPLICITLY
         });
+        
         await payment.save();
         console.log("✅ Payment record created:", payment._id);
+        console.log("📋 Payment details:", {
+          id: payment._id,
+          checkoutRequestId: payment.checkoutRequestId,
+          merchantRequestId: payment.merchantRequestId,
+          planName: payment.planName,
+          status: payment.status
+        });
       } catch (dbError: any) {
         console.error("❌ Failed to create payment record:", dbError.message);
+        console.error("❌ Validation errors:", dbError.errors);
         // Don't fail the entire request if DB save fails
       }
 
@@ -175,6 +186,7 @@ router.post("/stkpush", async (req: Request, res: Response) => {
 
 /**
  * STK Callback (C2B / STK responses from Safaricom) - UPDATED to save callback data
+ * This handles: POST /esse/callback
  */
 router.post("/callback", async (req: Request, res: Response) => {
   console.log("✅ STK Callback Received:", req.method);
@@ -243,7 +255,7 @@ router.post("/callback", async (req: Request, res: Response) => {
           console.log("⚠️ Payment not found for checkoutRequestId:", checkoutRequestId);
           // If payment not found, use TransactionService to create it from callback
           const transactionService = TransactionService.getInstance();
-          await transactionService.logTransaction(callbackData);
+          await transactionService.handleMpesaCallback(callbackData);
         }
 
       } else {
@@ -284,22 +296,175 @@ router.post("/callback", async (req: Request, res: Response) => {
 });
 
 /**
+ * STK Callback with Payment ID parameter - DEBUG VERSION
+ * This handles: POST /esse/callback/68e739a8f71d21e14505899c
+ */
+router.all("/callback/:paymentId", async (req: Request, res: Response) => {
+  console.log("✅ STK Callback with Payment ID Received");
+  console.log("🔗 Payment ID:", req.params.paymentId);
+  console.log("📦 Body:", JSON.stringify(req.body, null, 2));
+  
+  try {
+    const callbackData = req.body;
+    const paymentIdFromUrl = req.params.paymentId;
+    const stkCallback = callbackData.Body?.stkCallback;
+    
+    if (!stkCallback) {
+      console.log("❌ No stkCallback in callback data");
+      return res.status(200).json({ ResultCode: 0, ResultDesc: "Success" });
+    }
+
+    const resultCode = stkCallback.ResultCode;
+    const resultDesc = stkCallback.ResultDesc;
+    const checkoutRequestId = stkCallback.CheckoutRequestID;
+    const merchantRequestId = stkCallback.MerchantRequestID;
+
+    console.log("🔍 Callback details:", {
+      paymentIdFromUrl,
+      checkoutRequestId,
+      merchantRequestId,
+      resultCode,
+      resultDesc
+    });
+
+    // DEBUG: Check if payment exists by different methods
+    console.log("🔎 Searching for payment...");
+    
+    // 1. Search by payment ID from URL
+    const paymentById = await Payment.findById(paymentIdFromUrl);
+    console.log("📋 Payment by ID search:", paymentById ? `FOUND: ${paymentById._id}` : "NOT FOUND");
+    
+    // 2. Search by checkoutRequestId
+    const paymentByCheckout = await Payment.findOne({ checkoutRequestId });
+    console.log("📋 Payment by CheckoutRequestID search:", paymentByCheckout ? `FOUND: ${paymentByCheckout._id}` : "NOT FOUND");
+    
+    // 3. Search by merchantRequestId
+    const paymentByMerchant = await Payment.findOne({ merchantRequestId });
+    console.log("📋 Payment by MerchantRequestID search:", paymentByMerchant ? `FOUND: ${paymentByMerchant._id}` : "NOT FOUND");
+    
+    // 4. Search all recent payments to see what's in DB
+    const recentPayments = await Payment.find().sort({ createdAt: -1 }).limit(5);
+    console.log("📊 Recent payments in DB:", recentPayments.map(p => ({
+      id: p._id,
+      checkoutRequestId: p.checkoutRequestId,
+      merchantRequestId: p.merchantRequestId,
+      status: p.status,
+      amount: p.amount,
+      phone: p.phoneNumber
+    })));
+
+    // Extract callback metadata
+    let extractedMetadata = {};
+    let mpesaReceiptNumber = "";
+    
+    if (stkCallback.CallbackMetadata && stkCallback.CallbackMetadata.Item) {
+      stkCallback.CallbackMetadata.Item.forEach((item: any) => {
+        extractedMetadata[item.Name] = item.Value;
+        if (item.Name === "MpesaReceiptNumber") {
+          mpesaReceiptNumber = item.Value;
+        }
+      });
+    }
+
+    // Determine which payment to update
+    let paymentToUpdate = paymentById || paymentByCheckout || paymentByMerchant;
+    
+    if (paymentToUpdate) {
+      console.log("🎯 Updating payment:", paymentToUpdate._id);
+      
+      const updateData: any = {
+        status: resultCode === 0 ? 'completed' : 'failed',
+        resultCode: resultCode,
+        resultDesc: resultDesc,
+        callbackPayload: callbackData,
+        callbackMetadata: extractedMetadata
+      };
+
+      if (mpesaReceiptNumber) {
+        updateData.mpesaReceiptNumber = mpesaReceiptNumber;
+      }
+
+      if (resultCode === 0) {
+        updateData.completedAt = new Date();
+      }
+
+      const updatedPayment = await Payment.findByIdAndUpdate(
+        paymentToUpdate._id,
+        updateData,
+        { new: true }
+      );
+
+      console.log("✅ Payment updated successfully:", updatedPayment?._id);
+      console.log("📊 New status:", updatedPayment?.status);
+
+    } else {
+      console.log("❌ No payment found to update! Creating new payment from callback...");
+      
+      // Create a new payment from callback data with ALL required fields
+      const newPayment = new Payment({
+        userId: new mongoose.Types.ObjectId(),
+        planId: new mongoose.Types.ObjectId(),
+        planName: 'From Callback', // ✅ REQUIRED
+        amount: 0, // We don't know the amount from failed callback
+        phoneNumber: 'unknown', // ✅ REQUIRED
+        merchantRequestId: merchantRequestId,
+        checkoutRequestId: checkoutRequestId,
+        status: resultCode === 0 ? 'completed' : 'failed',
+        resultCode: resultCode,
+        resultDesc: resultDesc,
+        callbackPayload: callbackData,
+        callbackMetadata: extractedMetadata,
+        retryCount: 0 // ✅ REQUIRED (has default but be explicit)
+      });
+
+      const savedPayment = await newPayment.save();
+      console.log("📝 Created new payment from callback:", savedPayment._id);
+    }
+
+    res.status(200).json({ ResultCode: 0, ResultDesc: "Success" });
+  } catch (error) {
+    console.error("❌ Error in callback with paymentId:", error);
+    res.status(200).json({ ResultCode: 0, ResultDesc: "Success" });
+  }
+});
+
+/**
  * Simple C2B confirmation & validation endpoints
  */
-router.post("/confirmation", (req: Request, res: Response) => {
+router.all("/confirmation", (req: Request, res: Response) => {
   console.log("C2B Confirmation:", JSON.stringify(req.body, null, 2));
   fs.writeFileSync("confirmation.json", JSON.stringify(req.body, null, 2));
   res.status(200).json({ ResultCode: 0, ResultDesc: "Success" });
 });
 
-router.post("/validation", (req: Request, res: Response) => {
+router.all("/validation", (req: Request, res: Response) => {
   console.log("C2B Validation:", JSON.stringify(req.body, null, 2));
   fs.writeFileSync("validation.json", JSON.stringify(req.body, null, 2));
   res.status(200).json({ ResultCode: 0, ResultDesc: "Success" });
 });
 
-export default router;
+/**
+ * Temporary debug route to check payments in database
+ */
+router.get("/debug/payments", async (req: Request, res: Response) => {
+  try {
+    const payments = await Payment.find().sort({ createdAt: -1 }).limit(10);
+    res.json(payments.map(p => ({
+      _id: p._id,
+      planName: p.planName,
+      amount: p.amount,
+      phoneNumber: p.phoneNumber,
+      status: p.status,
+      checkoutRequestId: p.checkoutRequestId,
+      merchantRequestId: p.merchantRequestId,
+      createdAt: p.createdAt
+    })));
+  } catch (error: any) {
+    res.status(500).json({ error: error.message });
+  }
+});
 
+export default router;
 
 
 

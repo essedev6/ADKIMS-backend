@@ -43,240 +43,291 @@ export class TransactionService {
   }
 
   /**
-   * Save raw callback data directly to MongoDB
+   * Create initial pending payment (when STK push is initiated)
    */
-  async logTransaction(callbackData: any): Promise<void> {
-    console.log('🚀 START: logTransaction called');
+  async createPendingPayment(paymentData: {
+    userId: mongoose.Types.ObjectId;
+    planId?: mongoose.Types.ObjectId;
+    planName: string;
+    amount: number;
+    phoneNumber: string;
+    merchantRequestId: string;
+    checkoutRequestId: string;
+    transactionId: string;
+  }): Promise<IPaymentWithTimestamps> {
+    console.log('🆕 Creating pending payment...');
+    
+    const paymentRecord = new Payment({
+      ...paymentData,
+      status: 'pending',
+      retryCount: 0
+    });
+
+    const savedPayment = await paymentRecord.save() as unknown as IPaymentWithTimestamps;
+    console.log('📝 Pending payment created with ID:', savedPayment._id);
+    console.log('🔑 CheckoutRequestID:', paymentData.checkoutRequestId);
+    
+    return savedPayment;
+  }
+
+  /**
+   * Handle M-Pesa callback and update payment status
+   */
+  async handleMpesaCallback(callbackData: any): Promise<void> {
+    console.log('📨 M-Pesa Callback Received in TransactionService');
+    console.log('📦 Raw callback:', JSON.stringify(callbackData, null, 2));
     
     try {
-      console.log('💾 Step 1: Starting MongoDB save process...');
-      
-      // Extract basic info for the payment record
       const stkCallback = callbackData.Body?.stkCallback;
-      const checkoutRequestId = stkCallback?.CheckoutRequestID;
-      const resultCode = stkCallback?.ResultCode;
       
-      console.log('📋 Step 2: Extracted callback data:', {
-        hasCallbackData: !!callbackData,
-        hasStkCallback: !!stkCallback,
-        checkoutRequestId,
-        resultCode,
-        merchantRequestId: stkCallback?.MerchantRequestID
-      });
-
-      // Step 3: Extract individual fields
-      console.log('🔍 Step 3: Extracting individual fields...');
-      const amount = this.extractAmount(stkCallback);
-      const phoneNumber = this.extractPhoneNumber(stkCallback);
-      const mpesaReceiptNumber = this.extractMpesaReceipt(stkCallback);
-      const callbackMetadata = this.extractCallbackMetadata(stkCallback);
-
-      console.log('📊 Extracted fields:', {
-        amount,
-        phoneNumber,
-        mpesaReceiptNumber,
-        callbackMetadataKeys: Object.keys(callbackMetadata)
-      });
-
-      // Step 4: Create payment record
-      console.log('📝 Step 4: Creating Payment record...');
-      
-      const paymentData = {
-        userId: new mongoose.Types.ObjectId(),
-        planId: new mongoose.Types.ObjectId(),
-        planName: 'MPesa Payment', // Required field
-        amount: amount,
-        phoneNumber: phoneNumber,
-        merchantRequestId: stkCallback?.MerchantRequestID,
-        checkoutRequestId: checkoutRequestId,
-        status: resultCode === 0 ? 'completed' : 'failed',
-        resultCode: resultCode,
-        resultDesc: stkCallback?.ResultDesc,
-        mpesaReceiptNumber: mpesaReceiptNumber,
-        callbackPayload: callbackData,
-        callbackMetadata: callbackMetadata,
-        retryCount: 0 // Required field
-      };
-
-      console.log('📄 Payment data to save:', JSON.stringify(paymentData, null, 2));
-
-      const paymentRecord = new Payment(paymentData);
-      console.log('✅ Payment record instance created');
-
-      // Step 5: Save to MongoDB
-      console.log('💾 Step 5: Attempting to save to MongoDB...');
-      console.log('📡 MongoDB connection state:', mongoose.connection.readyState);
-      console.log('📡 MongoDB connection host:', mongoose.connection.host);
-
-      const savedPayment = await paymentRecord.save() as unknown as IPaymentWithTimestamps;
-      
-      console.log('🎉 SUCCESS: Raw callback saved to MongoDB with ID:', savedPayment._id);
-      console.log('📊 Payment status:', savedPayment.status);
-      console.log('🕒 Created at:', savedPayment.createdAt);
-      
-      // Step 6: Notify via WebSocket if payment was successful
-      if (resultCode === 0) {
-        console.log('🔔 Step 6: Sending WebSocket notification...');
-        this.wsService.notifyPaymentUpdate({
-          _id: savedPayment._id.toString(),
-          status: 'completed',
-          amount: savedPayment.amount,
-          phoneNumber: savedPayment.phoneNumber,
-          mpesaReceiptNumber: savedPayment.mpesaReceiptNumber,
-          resultDesc: savedPayment.resultDesc,
-          createdAt: savedPayment.createdAt
-        });
-        
-        console.log('🎊 Payment completed and fully processed!');
+      if (!stkCallback) {
+        console.log('❌ No stkCallback in callback data');
+        return;
       }
 
-      console.log('🏁 END: logTransaction completed successfully');
+      const checkoutRequestId = stkCallback.CheckoutRequestID;
+      const resultCode = stkCallback.ResultCode;
+      const resultDesc = stkCallback.ResultDesc;
+      
+      console.log('🔍 Callback details:', {
+        checkoutRequestId,
+        resultCode, 
+        resultDesc,
+        hasCallbackMetadata: !!stkCallback.CallbackMetadata
+      });
+
+      if (!checkoutRequestId) {
+        console.log('❌ No CheckoutRequestID in callback');
+        return;
+      }
+
+      // Find payment by CheckoutRequestID
+      const payment = await Payment.findOne({ checkoutRequestId }) as unknown as IPaymentWithTimestamps;
+      
+      if (!payment) {
+        console.log('❌ No payment found for CheckoutRequestID:', checkoutRequestId);
+        
+        // Try to find by merchantRequestId as fallback
+        const merchantRequestId = stkCallback.MerchantRequestID;
+        if (merchantRequestId) {
+          const fallbackPayment = await Payment.findOne({ merchantRequestId }) as unknown as IPaymentWithTimestamps;
+          if (fallbackPayment) {
+            console.log('✅ Found payment by MerchantRequestID:', fallbackPayment._id);
+            await this.updatePaymentWithCallback(fallbackPayment, stkCallback);
+            return;
+          }
+        }
+        
+        console.log('❌ No payment found with any identifier');
+        return;
+      }
+
+      console.log('✅ Found payment:', payment._id);
+      console.log('📊 Current status:', payment.status);
+
+      await this.updatePaymentWithCallback(payment, stkCallback);
 
     } catch (error: any) {
-      console.error('❌ ERROR: Failed to save to MongoDB');
-      console.error('❌ Error name:', error.name);
-      console.error('❌ Error message:', error.message);
-      console.error('❌ Error code:', error.code);
+      console.error('❌ Error processing callback:', error);
       console.error('❌ Error stack:', error.stack);
-      
-      // Check for specific error types
-      if (error.name === 'ValidationError') {
-        console.error('🔍 VALIDATION ERROR DETAILS:');
-        Object.keys(error.errors).forEach(key => {
-          console.error(`  - ${key}:`, error.errors[key].message);
-        });
-      }
-      
-      if (error.name === 'MongoServerError') {
-        console.error('🔍 MONGO SERVER ERROR DETAILS:');
-        console.error('  - Error code:', error.code);
-        console.error('  - Key pattern:', error.keyPattern);
-        console.error('  - Key value:', error.keyValue);
-      }
-
-      // Step 7: Save to file as fallback
-      console.log('📁 Step 7: Falling back to file save...');
-      this.saveRawCallback(callbackData);
     }
   }
 
   /**
-   * Extract amount from callback metadata
+   * Update payment with callback data
    */
-  private extractAmount(stkCallback: any): number {
+  private async updatePaymentWithCallback(payment: IPaymentWithTimestamps, stkCallback: any): Promise<void> {
     try {
-      if (!stkCallback?.CallbackMetadata?.Item) {
-        console.log('⚠️ No CallbackMetadata.Item found for amount extraction');
-        return 0;
-      }
-      
-      const amountItem = stkCallback.CallbackMetadata.Item.find(
-        (item: any) => item.Name === 'Amount'
-      );
-      
-      const amount = amountItem?.Value || 0;
-      console.log('💰 Amount extracted:', amount);
-      return amount;
-      
-    } catch (error) {
-      console.error('❌ Error extracting amount:', error);
-      return 0;
-    }
-  }
+      const resultCode = stkCallback.ResultCode;
+      const resultDesc = stkCallback.ResultDesc;
 
-  /**
-   * Extract phone number from callback metadata
-   */
-  private extractPhoneNumber(stkCallback: any): string {
-    try {
-      if (!stkCallback?.CallbackMetadata?.Item) {
-        console.log('⚠️ No CallbackMetadata.Item found for phone extraction');
-        return '';
-      }
-      
-      const phoneItem = stkCallback.CallbackMetadata.Item.find(
-        (item: any) => item.Name === 'PhoneNumber'
-      );
-      
-      const phone = phoneItem?.Value?.toString() || '';
-      console.log('📞 Phone extracted:', phone);
-      return phone;
-      
-    } catch (error) {
-      console.error('❌ Error extracting phone:', error);
-      return '';
-    }
-  }
+      // Extract callback metadata
+      const amount = this.extractCallbackValue(stkCallback, 'Amount');
+      const mpesaReceiptNumber = this.extractCallbackValue(stkCallback, 'MpesaReceiptNumber');
+      const transactionDate = this.extractCallbackValue(stkCallback, 'TransactionDate');
+      const phoneNumber = this.extractCallbackValue(stkCallback, 'PhoneNumber');
 
-  /**
-   * Extract M-Pesa receipt number from callback metadata
-   */
-  private extractMpesaReceipt(stkCallback: any): string {
-    try {
-      if (!stkCallback?.CallbackMetadata?.Item) {
-        console.log('⚠️ No CallbackMetadata.Item found for receipt extraction');
-        return '';
-      }
-      
-      const receiptItem = stkCallback.CallbackMetadata.Item.find(
-        (item: any) => item.Name === 'MpesaReceiptNumber'
-      );
-      
-      const receipt = receiptItem?.Value || '';
-      console.log('🧾 Receipt extracted:', receipt);
-      return receipt;
-      
-    } catch (error) {
-      console.error('❌ Error extracting receipt:', error);
-      return '';
-    }
-  }
-
-  /**
-   * Extract and format callback metadata
-   */
-  private extractCallbackMetadata(stkCallback: any): any {
-    try {
-      if (!stkCallback?.CallbackMetadata?.Item) {
-        console.log('⚠️ No CallbackMetadata.Item found for metadata extraction');
-        return {};
-      }
-      
-      const metadata: any = {};
-      stkCallback.CallbackMetadata.Item.forEach((item: any) => {
-        metadata[item.Name] = item.Value;
+      console.log('📋 Extracted metadata:', {
+        amount,
+        mpesaReceiptNumber,
+        transactionDate,
+        phoneNumber
       });
-      
-      console.log('📋 Metadata extracted with keys:', Object.keys(metadata));
-      return metadata;
-      
-    } catch (error) {
-      console.error('❌ Error extracting metadata:', error);
-      return {};
+
+      // Determine new status
+      let newStatus: 'pending' | 'completed' | 'failed' = 'pending';
+      if (resultCode === 0) {
+        newStatus = 'completed';
+        console.log('✅ Payment completed successfully');
+      } else if (resultCode > 0) {
+        newStatus = 'failed';
+        console.log('❌ Payment failed with code:', resultCode);
+      } else {
+        console.log('⏳ Payment still pending');
+      }
+
+      console.log('🎯 Updating payment status from', payment.status, 'to', newStatus);
+
+      // Update payment
+      const updateData: any = {
+        status: newStatus,
+        resultCode: resultCode,
+        resultDesc: resultDesc
+      };
+
+      if (mpesaReceiptNumber) {
+        updateData.mpesaReceiptNumber = mpesaReceiptNumber;
+      }
+      if (amount) {
+        updateData.amount = amount;
+      }
+      if (phoneNumber) {
+        updateData.phoneNumber = phoneNumber;
+      }
+
+  // Add callback metadata as Map
+if (stkCallback.CallbackMetadata) {
+  const callbackMetadata = new Map();
+  stkCallback.CallbackMetadata.Item.forEach((item: any) => {
+    callbackMetadata.set(item.Name, item.Value);
+  });
+  updateData.callbackMetadata = callbackMetadata;
+}
+
+      const updatedPayment = await Payment.findByIdAndUpdate(
+        payment._id,
+        updateData,
+        { new: true }
+      ) as unknown as IPaymentWithTimestamps;
+
+      console.log('✅ Payment updated successfully');
+      console.log('📊 New status:', updatedPayment.status);
+      console.log('🧾 M-Pesa Receipt:', updatedPayment.mpesaReceiptNumber);
+
+      // Send WebSocket notification if completed
+      if (newStatus === 'completed') {
+        console.log('🔔 Sending WebSocket notification...');
+        this.wsService.notifyPaymentUpdate({
+          _id: updatedPayment._id.toString(),
+          status: 'completed',
+          amount: updatedPayment.amount,
+          phoneNumber: updatedPayment.phoneNumber,
+          mpesaReceiptNumber: updatedPayment.mpesaReceiptNumber,
+          resultDesc: updatedPayment.resultDesc,
+          createdAt: updatedPayment.createdAt
+        });
+        console.log('🎊 Payment completed and notification sent!');
+      }
+
+    } catch (error: any) {
+      console.error('❌ Error updating payment with callback:', error);
+      throw error;
     }
   }
 
   /**
-   * Save raw callback to file (fallback)
+   * Extract value from callback metadata
    */
-  private saveRawCallback(callbackData: any): void {
+  private extractCallbackValue(stkCallback: any, fieldName: string): any {
     try {
-      const fs = require('fs');
-      const path = require('path');
-      
-      const logsDir = path.join(__dirname, '../../logs');
-      if (!fs.existsSync(logsDir)) {
-        fs.mkdirSync(logsDir, { recursive: true });
+      if (!stkCallback?.CallbackMetadata?.Item) {
+        console.log(`⚠️ No CallbackMetadata.Item found for ${fieldName}`);
+        return null;
       }
-
-      const filename = `callback-${Date.now()}.json`;
-      const filepath = path.join(logsDir, filename);
       
-      fs.writeFileSync(filepath, JSON.stringify(callbackData, null, 2));
-      console.log('📄 Raw callback saved to file as fallback:', filepath);
-
+      const item = stkCallback.CallbackMetadata.Item.find(
+        (item: any) => item.Name === fieldName
+      );
+      
+      const value = item?.Value || null;
+      console.log(`📥 Extracted ${fieldName}:`, value);
+      return value;
+      
     } catch (error) {
-      console.error('❌ Error saving raw callback to file:', error);
+      console.error(`❌ Error extracting ${fieldName}:`, error);
+      return null;
+    }
+  }
+
+  /**
+   * Get payment by checkoutRequestId
+   */
+  async getPaymentByCheckoutRequestId(checkoutRequestId: string): Promise<IPaymentWithTimestamps | null> {
+    try {
+      const payment = await Payment.findOne({ checkoutRequestId }) as unknown as IPaymentWithTimestamps;
+      return payment;
+    } catch (error) {
+      console.error('Error finding payment:', error);
+      return null;
+    }
+  }
+
+  /**
+   * Get payment by merchantRequestId
+   */
+  async getPaymentByMerchantRequestId(merchantRequestId: string): Promise<IPaymentWithTimestamps | null> {
+    try {
+      const payment = await Payment.findOne({ merchantRequestId }) as unknown as IPaymentWithTimestamps;
+      return payment;
+    } catch (error) {
+      console.error('Error finding payment:', error);
+      return null;
+    }
+  }
+
+  /**
+   * Manually update payment status (for testing)
+   */
+  async manuallyUpdatePayment(paymentId: string, status: 'completed' | 'failed', receiptNumber?: string): Promise<boolean> {
+    try {
+      const updated = await Payment.findByIdAndUpdate(
+        paymentId,
+        { 
+          status: status,
+          ...(receiptNumber && { mpesaReceiptNumber: receiptNumber })
+        },
+        { new: true }
+      );
+      
+      console.log(`✅ Manually updated payment ${paymentId} to ${status}`);
+      return !!updated;
+    } catch (error) {
+      console.error('Error manually updating payment:', error);
+      return false;
+    }
+  }
+
+  /**
+   * Simulate M-Pesa callback for testing
+   */
+  async simulateMpesaCallback(checkoutRequestId: string, success: boolean = true): Promise<boolean> {
+    try {
+      console.log('🎭 Simulating M-Pesa callback for:', checkoutRequestId);
+      
+      const simulatedCallback = {
+        Body: {
+          stkCallback: {
+            MerchantRequestID: "simulated-merchant-id",
+            CheckoutRequestID: checkoutRequestId,
+            ResultCode: success ? 0 : 1,
+            ResultDesc: success ? "The service request is processed successfully." : "The balance is insufficient for the transaction",
+            CallbackMetadata: {
+              Item: [
+                { Name: "Amount", Value: 5 },
+                { Name: "MpesaReceiptNumber", Value: "SIM" + Date.now() },
+                { Name: "TransactionDate", Value: new Date().toISOString().replace(/[-:]/g, '').split('.')[0] },
+                { Name: "PhoneNumber", Value: "254757597007" }
+              ]
+            }
+          }
+        }
+      };
+
+      await this.handleMpesaCallback(simulatedCallback);
+      return true;
+    } catch (error) {
+      console.error('Error simulating callback:', error);
+      return false;
     }
   }
 
@@ -288,15 +339,17 @@ export class TransactionService {
       console.log('📊 Fetching all payments from MongoDB...');
       const payments = await Payment.find()
         .sort({ createdAt: -1 })
-        .select('amount phoneNumber status resultDesc mpesaReceiptNumber callbackPayload createdAt')
+        .select('amount phoneNumber status resultCode resultDesc mpesaReceiptNumber checkoutRequestId merchantRequestId callbackPayload createdAt')
         .limit(50) as unknown as IPaymentWithTimestamps[];
       
       console.log(`📊 Found ${payments.length} payments in database`);
       
-      // Access createdAt without TypeScript errors
-      if (payments.length > 0) {
-        console.log('🕒 Sample createdAt:', payments[0].createdAt);
-      }
+      // Log status distribution for debugging
+      const statusCount = payments.reduce((acc, payment) => {
+        acc[payment.status] = (acc[payment.status] || 0) + 1;
+        return acc;
+      }, {} as any);
+      console.log('📈 Payment status distribution:', statusCount);
       
       return payments;
     } catch (error) {
@@ -312,14 +365,16 @@ export class TransactionService {
     try {
       console.log(`🔍 Fetching payment ${paymentId} from MongoDB...`);
       const payment = await Payment.findById(paymentId)
-        .select('amount phoneNumber status resultDesc mpesaReceiptNumber callbackPayload callbackMetadata createdAt') as unknown as IPaymentWithTimestamps;
+        .select('amount phoneNumber status resultCode resultDesc mpesaReceiptNumber checkoutRequestId merchantRequestId callbackPayload callbackMetadata createdAt') as unknown as IPaymentWithTimestamps;
       
       if (!payment) {
         console.log(`❌ Payment ${paymentId} not found in MongoDB`);
         return null;
       } else {
         console.log(`✅ Payment ${paymentId} found in MongoDB`);
-        console.log('🕒 Created at:', payment.createdAt);
+        console.log('📊 Status:', payment.status);
+        console.log('🔢 ResultCode:', payment.resultCode);
+        console.log('🔑 CheckoutRequestID:', payment.checkoutRequestId);
       }
       
       return payment;
@@ -345,12 +400,13 @@ export class TransactionService {
         phoneNumber: "254700000000",
         merchantRequestId: "test-merchant-" + Date.now(),
         checkoutRequestId: "test-checkout-" + Date.now(),
-        status: 'completed' as const,
+        transactionId: "TEST_TXN_" + Date.now(),
+        status: 'pending' as const,
         resultCode: 0,
         resultDesc: "Test payment",
         mpesaReceiptNumber: "TEST123",
         callbackPayload: { test: true },
-        callbackMetadata: { Amount: 100, PhoneNumber: "254700000000" },
+       callbackMetadata: new Map<string, any>([['Amount', 100], ['PhoneNumber', "254700000000"]]),
         retryCount: 0
       };
 
@@ -361,12 +417,13 @@ export class TransactionService {
       
       console.log('✅ Test payment saved successfully:', saved._id);
       console.log('🕒 Created at:', saved.createdAt);
+      console.log('📊 Status:', saved.status);
       
       // Clean up test data
       await Payment.deleteOne({ _id: saved._id });
       console.log('🧹 Test payment cleaned up');
       
-      return { success: true, paymentId: saved._id, createdAt: saved.createdAt };
+      return { success: true, paymentId: saved._id, createdAt: saved.createdAt, status: saved.status };
     } catch (error: any) {
       console.error('❌ Test payment failed:', error.message);
       console.error('❌ Full error:', error);
